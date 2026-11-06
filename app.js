@@ -30,7 +30,7 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 const $app = document.getElementById('app');
-function show(...nodes) { $app.replaceChildren(...nodes); }
+function show(...nodes) { $app.replaceChildren(...nodes.flat().filter((n) => n !== null && n !== undefined && n !== false)); }
 
 let toastTimer;
 function toast(msg, isError = false) {
@@ -273,7 +273,7 @@ function gradeForm(team, sectionId, mine) {
 
   const myGroup = mine.groups.find((g) => g.team_id === team.id);
   const groupInput = el('input', { type: 'number', min: 0, max: 100, step: '0.01', required: true, value: myGroup ? myGroup.grade : '', placeholder: '0 – 100' });
-  const remarksInput = el('textarea', { rows: 2, maxlength: 1000, placeholder: 'Optional remarks' });
+  const remarksInput = el('textarea', { rows: 5, maxlength: 2000, placeholder: 'Strengths, things to improve, suggestions for the team…' });
   remarksInput.value = myGroup?.remarks || '';
 
   const memberInputs = membersOf(team.id).map((m) => {
@@ -324,9 +324,12 @@ function gradeForm(team, sectionId, mine) {
     ),
     rubricBlocks,
     el('div', { class: 'card' },
+      el('h3', {}, 'Comments for this team'),
+      el('label', {}, 'Your feedback in words (optional). The team can read it when the results are published, without your name.', remarksInput),
+    ),
+    el('div', { class: 'card' },
       el('h3', {}, 'Group grade (no rubric)'),
       el('label', {}, 'Grade for the whole team, 0 to 100', groupInput),
-      el('label', {}, 'Remarks', remarksInput),
       el('h3', {}, 'Individual grades (no rubric)'),
       memberInputs.length
         ? memberInputs.map(({ member, input }) => el('label', {}, member.full_name, input))
@@ -346,7 +349,7 @@ async function renderResults() {
     db.from('app_settings').select('*').eq('id', 1).single(),
   ]);
   const S = check(scores), G = check(groups), I = check(individuals), P = check(profiles), cfg = check(settings);
-  const results = computeResults(S, G, I);
+  const results = computeResults(S, G, I, P);
 
   const sections = state.data.sections;
   const head = el('tr', {},
@@ -365,6 +368,15 @@ async function renderResults() {
     el('td', { class: 'num' }, el('strong', {}, pct(r.rubricAverage))),
     el('td', { class: 'num' }, pct(r.groupAverage), el('div', { class: 'member-line' }, r.groupCount + ' panelist(s)')),
     el('td', {}, r.members.map((m) => el('div', { class: 'member-line' }, `${m.member.full_name}: ${pct(m.average)} (${m.count})`))),
+  ));
+
+  // Panel comments, team by team
+  const commentCards = results.filter((r) => r.comments.length).map((r) => el('div', { class: 'card' },
+    el('h3', {}, 'Comments for ' + r.team.name),
+    r.comments.map((c) => el('div', { class: 'comment' },
+      el('div', { class: 'member-line' }, c.who + (c.section ? ` · Section ${c.section}` : '')),
+      el('p', {}, c.text),
+    )),
   ));
 
   const panelistsBySection = sections.map((s) => {
@@ -406,10 +418,12 @@ async function renderResults() {
     el('div', { class: 'card table-wrap' },
       results.length ? el('table', {}, el('thead', {}, head), el('tbody', {}, rows)) : el('p', { class: 'muted' }, 'No teams yet.'),
     ),
+    commentCards.length ? el('h2', {}, 'Panel comments') : null,
+    commentCards,
   );
 }
 
-function computeResults(S, G, I) {
+function computeResults(S, G, I, P = []) {
   return state.data.teams.map((team) => {
     const sections = {};
     for (const s of state.data.sections) {
@@ -434,23 +448,28 @@ function computeResults(S, G, I) {
       const v = I.filter((i) => i.member_id === member.id).map((i) => Number(i.grade));
       return { member, average: avg(v), count: v.length };
     });
+    const comments = G.filter((g) => g.team_id === team.id && (g.remarks || '').trim()).map((g) => {
+      const p = P.find((x) => x.id === g.panelist_id);
+      return { who: p ? (p.full_name || p.email) : 'Panelist', section: p?.section_id || null, text: g.remarks.trim() };
+    });
     return {
       team, sections,
       rubricAverage: sectionValues.length === state.data.sections.length ? avg(sectionValues) : null,
-      groupAverage: avg(groupGrades), groupCount: groupGrades.length, members,
+      groupAverage: avg(groupGrades), groupCount: groupGrades.length, members, comments,
     };
   });
 }
 
 function downloadCsv(results) {
   const q = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const lines = [['Team', 'Project', 'Member', ...state.data.sections.map((s) => 'Section ' + s.id + ' %'), 'Rubric average %', 'Group grade', 'Individual grade'].map(q).join(',')];
+  const lines = [['Team', 'Project', 'Member', ...state.data.sections.map((s) => 'Section ' + s.id + ' %'), 'Rubric average %', 'Group grade', 'Individual grade', 'Panel comments'].map(q).join(',')];
   for (const r of results) {
     const base = state.data.sections.map((s) => pct(r.sections[s.id].percent));
+    const comments = r.comments.map((c) => `${c.who}${c.section ? ' (Sec ' + c.section + ')' : ''}: ${c.text}`).join(' | ');
     const rows = r.members.length ? r.members : [{ member: { full_name: '' }, average: null }];
-    for (const m of rows) {
-      lines.push([r.team.name, r.team.project_title, m.member.full_name, ...base, pct(r.rubricAverage), pct(r.groupAverage), pct(m.average)].map(q).join(','));
-    }
+    rows.forEach((m, i) => {
+      lines.push([r.team.name, r.team.project_title, m.member.full_name, ...base, pct(r.rubricAverage), pct(r.groupAverage), pct(m.average), i === 0 ? comments : ''].map(q).join(','));
+    });
   }
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = el('a', { href: URL.createObjectURL(blob), download: 'defense-results.csv' });
@@ -665,6 +684,13 @@ async function renderPublicResults() {
     el('div', { class: 'card table-wrap' },
       data.teams.length ? el('table', {}, el('thead', {}, head), el('tbody', {}, rows)) : el('p', { class: 'muted' }, 'No teams yet.'),
     ),
+    data.teams.filter((t) => (t.comments || []).length).map((t) => el('div', { class: 'card' },
+      el('h3', {}, 'Panel comments for ' + t.name),
+      t.comments.map((c) => el('div', { class: 'comment' },
+        el('div', { class: 'member-line' }, c.section ? 'Section ' + c.section + ' panelist' : 'Panelist'),
+        el('p', {}, c.text),
+      )),
+    )),
   );
 }
 

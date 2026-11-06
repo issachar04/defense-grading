@@ -30,14 +30,14 @@ A web app for grading team defenses. Panelists sign in on their phone or laptop 
 **Panelists**
 1. Open the site and create an account (no email confirmation needed).
 2. Once the admin assigns a section, sign in and open **Grade teams**.
-3. Pick a team, score every criterion, give the group and individual grades, and click **Save grades**. Grades can be changed later.
+3. Pick a team, score every criterion, give the group and individual grades, write any **comments for the team** (optional), and click **Save grades**. Grades and comments can be changed later.
 
 ## Public pages (no sign-in)
 
 | Page | Address | What it does |
 | --- | --- | --- |
 | Team registration | `…/defense-grading/#/register` | A team enters its name, project title and members (up to 10). Works only while the admin keeps **Team registration open** on. |
-| Public results | `…/defense-grading/#/results` | Shows every team's section %, rubric average, group grade and members' grades, but only after the admin turns on **Show results on the public page**. Until then it says the results aren't released yet. |
+| Public results | `…/defense-grading/#/results` | Shows every team's section %, rubric average, group grade, members' grades and the panel comments (with the section, not the panelist's name), but only after the admin turns on **Show results on the public page**. Until then it says the results aren't released yet. |
 
 Both switches are at the top of the admin **Results** page. Visitors can't touch the tables: the pages call two database functions (`register_team`, `public_results`) that check everything first.
 
@@ -59,3 +59,4 @@ Both switches are at the top of the admin **Results** page. Visitors can't touch
 | `config.js` | The Supabase project URL and publishable key (safe to be public) |
 | `supabase/schema.sql` | Tables, security rules and the rubrics; run once in the Supabase SQL Editor |
 | `supabase/002_public_pages.sql` | Settings, team registration and public results; run once after `schema.sql` |
+| `supabase/003_comments.sql` | Panel comments on the public results page (max 2,000 characters); run once after `002_public_pages.sql` |
