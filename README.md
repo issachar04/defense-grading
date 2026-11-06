@@ -21,14 +21,14 @@ A web app for grading team defenses. Panelists sign in on their phone or laptop 
 ## Using it
 
 **Admin** (nate060489@gmail.com)
-1. Open the site and click **New panelist? Create an account** with the admin email. Confirm the email, then sign in. That email becomes admin automatically.
+1. Open the site and click **New panelist? Create an account** with the admin email. You're signed in at once, and that email becomes admin automatically.
 2. **Teams:** add each team, its project title and its members.
 3. **Panelists:** after the panelists create their accounts, choose the section each one grades.
 4. **Results:** watch the grades come in, then click **Download CSV**.
 5. **Rubrics:** edit, add or delete criteria if needed.
 
 **Panelists**
-1. Open the site, create an account, and confirm the email.
+1. Open the site and create an account (no email confirmation needed).
 2. Once the admin assigns a section, sign in and open **Grade teams**.
 3. Pick a team, score every criterion, give the group and individual grades, and click **Save grades**. Grades can be changed later.
 
@@ -40,6 +40,7 @@ A web app for grading team defenses. Panelists sign in on their phone or laptop 
   - A panelist can only read and write **their own** grades, and only for **their own section's** criteria.
   - Only the admin can change teams, members, rubrics and panelists, and only the admin can see everyone's grades.
 - The database also checks the values: scores must be 1 to 5, and grades must be 0 to 100.
+- Email confirmation is turned off in Supabase (Authentication > Sign In / Providers) so panelists can join quickly on defense day. A new account can't grade or see any grades until the admin assigns it a section.
 
 ## Files
 
