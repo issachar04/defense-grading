@@ -81,7 +81,19 @@ function renderHeader() {
   const who = document.getElementById('who');
   nav.replaceChildren();
   who.replaceChildren();
-  if (!state.profile) return;
+  // Pages anyone can open, without signing in
+  const route = location.hash;
+  const publicLinks = [['#/results', 'Public results'], ['#/register', 'Register a team']];
+  if (!state.profile || route.startsWith('#/')) {
+    for (const [hash, label] of publicLinks) {
+      nav.append(el('button', { class: route === hash ? 'active' : '', onclick: () => { location.hash = hash; } }, label));
+    }
+    if (route.startsWith('#/')) {
+      nav.append(el('button', { onclick: () => { location.hash = ''; } }, state.profile ? 'Back to the app' : 'Sign in'));
+    }
+    if (!state.profile) return;
+    if (route.startsWith('#/')) return;
+  }
 
   const tabs = [];
   if (state.profile.section_id) tabs.push(['grade', 'Grade teams']);
@@ -326,13 +338,14 @@ function gradeForm(team, sectionId, mine) {
 
 // ---------- Admin: results ----------
 async function renderResults() {
-  const [scores, groups, individuals, profiles] = await Promise.all([
+  const [scores, groups, individuals, profiles, settings] = await Promise.all([
     db.from('rubric_scores').select('*'),
     db.from('group_grades').select('*'),
     db.from('individual_grades').select('*'),
     db.from('profiles').select('*'),
+    db.from('app_settings').select('*').eq('id', 1).single(),
   ]);
-  const S = check(scores), G = check(groups), I = check(individuals), P = check(profiles);
+  const S = check(scores), G = check(groups), I = check(individuals), P = check(profiles), cfg = check(settings);
   const results = computeResults(S, G, I);
 
   const sections = state.data.sections;
@@ -359,7 +372,27 @@ async function renderResults() {
     return el('div', { class: 'member-line' }, `Section ${s.id}: ${names.length ? names.join(', ') : 'no panelists yet'}`);
   });
 
+  // Switches for the two public pages
+  const toggle = (field, label, onText, offText) => {
+    const box = el('input', { type: 'checkbox', checked: cfg[field] });
+    const note = el('span', { class: 'muted' }, cfg[field] ? onText : offText);
+    box.addEventListener('change', () => guard(async () => {
+      check(await db.from('app_settings').update({ [field]: box.checked }).eq('id', 1));
+      note.textContent = box.checked ? onText : offText;
+      toast('Saved.');
+    }));
+    return el('label', { class: 'row', style: 'flex-direction:row' }, box, el('strong', {}, label), note);
+  };
+  const pageUrl = location.origin + location.pathname;
+
   show(
+    el('div', { class: 'card' },
+      el('h2', {}, 'Public pages'),
+      toggle('registration_open', 'Team registration open', '(teams can add themselves)', '(closed)'),
+      el('p', { class: 'member-line' }, 'Registration page: ' + pageUrl + '#/register'),
+      toggle('results_public', 'Show results on the public page', '(everyone can see the grades)', '(hidden: grades stay private)'),
+      el('p', { class: 'member-line' }, 'Public results page: ' + pageUrl + '#/results'),
+    ),
     el('div', { class: 'card' },
       el('div', { class: 'row' },
         el('h2', {}, 'Results'),
@@ -552,10 +585,100 @@ function renderRubrics() {
   show(...blocks);
 }
 
+// ---------- Public page: team registration ----------
+function renderRegister() {
+  renderHeader();
+  const name = el('input', { required: true, minlength: 2, maxlength: 100, placeholder: 'Team 1' });
+  const title = el('input', { maxlength: 200, placeholder: 'Your project title' });
+  const members = el('textarea', { rows: 6, required: true, placeholder: 'Juan Dela Cruz\nMaria Santos\nPedro Reyes' });
+  const msg = el('p', { class: 'error', role: 'status' });
+  const form = el('form', { onsubmit: async (e) => {
+      e.preventDefault();
+      msg.className = 'error';
+      msg.textContent = '';
+      const list = members.value.split('\n').map((s) => s.trim()).filter(Boolean);
+      if (list.length === 0) { msg.textContent = 'Add at least one member.'; return; }
+      if (list.length > 10) { msg.textContent = 'A team can have at most 10 members.'; return; }
+      const short = list.find((n) => n.length < 2 || n.length > 100);
+      if (short) { msg.textContent = `"${short}" isn't a valid name (2 to 100 characters).`; return; }
+      const button = form.querySelector('button[type=submit]');
+      button.disabled = true;
+      try {
+        const res = await db.rpc('register_team', { p_name: name.value.trim(), p_title: title.value.trim(), p_members: list });
+        if (res.error) throw res.error;
+        const teamName = name.value.trim();
+        form.reset();
+        msg.className = 'ok';
+        msg.textContent = `${teamName} is registered with ${list.length} member(s). Good luck on your defense!`;
+      } catch (err) {
+        msg.textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+    } },
+    el('h2', {}, 'Register your team'),
+    el('p', { class: 'muted' }, 'No account needed. One person per team fills this in once. To change it later, ask the admin.'),
+    el('label', {}, 'Team name', name),
+    el('label', {}, 'Project title', title),
+    el('label', {}, 'Members (full names, one per line, up to 10)', members),
+    el('button', { type: 'submit' }, 'Register team'),
+    msg,
+  );
+  show(el('div', { class: 'card narrow' }, form));
+}
+
+// ---------- Public page: published results ----------
+async function renderPublicResults() {
+  renderHeader();
+  show(el('p', { class: 'muted' }, 'Loading…'));
+  const res = await db.rpc('public_results');
+  if (res.error) return show(el('div', { class: 'card narrow' }, el('p', { class: 'error' }, res.error.message)));
+  const data = res.data;
+  if (!data.published) {
+    return show(el('div', { class: 'card narrow' },
+      el('h2', {}, 'Results'),
+      el('p', {}, 'The results are not released yet. Please check again after the panel publishes them.'),
+      el('button', { class: 'secondary', onclick: renderPublicResults }, 'Refresh'),
+    ));
+  }
+  const sections = data.sections || [];
+  const head = el('tr', {},
+    el('th', {}, 'Team'),
+    sections.map((s) => el('th', { class: 'num', title: s.name }, 'Sec ' + s.id + ' %')),
+    el('th', { class: 'num' }, 'Rubric average %'),
+    el('th', { class: 'num' }, 'Group grade'),
+    el('th', {}, 'Members (individual grade)'),
+  );
+  const rows = data.teams.map((t) => el('tr', {},
+    el('td', {}, el('strong', {}, t.name), el('div', { class: 'member-line' }, t.project_title || '')),
+    sections.map((s) => el('td', { class: 'num' }, pct(t.sections[String(s.id)] ?? null))),
+    el('td', { class: 'num' }, el('strong', {}, pct(t.rubric_average))),
+    el('td', { class: 'num' }, pct(t.group_grade)),
+    el('td', {}, t.members.map((m) => el('div', { class: 'member-line' }, `${m.name}: ${pct(m.grade)}`))),
+  ));
+  show(
+    el('div', { class: 'card' },
+      el('div', { class: 'row' }, el('h2', {}, 'Defense results'), el('span', { class: 'spacer' }),
+        el('button', { class: 'secondary', onclick: renderPublicResults }, 'Refresh')),
+      el('p', { class: 'muted' }, sections.map((s) => `Section ${s.id}: ${s.name}`).join(' · ')),
+    ),
+    el('div', { class: 'card table-wrap' },
+      data.teams.length ? el('table', {}, el('thead', {}, head), el('tbody', {}, rows)) : el('p', { class: 'muted' }, 'No teams yet.'),
+    ),
+  );
+}
+
 // ---------- Start ----------
 async function start() {
   const { data } = await db.auth.getSession();
   state.user = data.session?.user || null;
+  // Public pages work for everyone, signed in or not
+  if (location.hash === '#/register' || location.hash === '#/results') {
+    if (state.user && !state.profile) {
+      state.profile = (await db.from('profiles').select('*').eq('id', state.user.id).single()).data || null;
+    }
+    return guard(() => (location.hash === '#/register' ? renderRegister() : renderPublicResults()));
+  }
   if (!state.user) return renderAuth();
   await guard(async () => {
     state.profile = check(await db.from('profiles').select('*').eq('id', state.user.id).single());
@@ -570,4 +693,5 @@ db.auth.onAuthStateChange((event) => {
     setTimeout(start, 0);
   }
 });
+window.addEventListener('hashchange', start);
 start();
