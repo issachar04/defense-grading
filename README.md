@@ -23,7 +23,7 @@ A web app for grading team defenses. Panelists sign in on their phone or laptop 
 **Admin** (nate060489@gmail.com)
 1. Open the site and click **New panelist? Create an account** with the admin email. You're signed in at once, and that email becomes admin automatically.
 2. **Teams:** add each team, its project title and its members.
-3. **Panelists:** after the panelists create their accounts, choose the section each one grades.
+3. **Panelists:** after the panelists create their accounts, choose the section each one grades. Choose **All sections (every rubric)** for a panelist who grades the remaining teams on all 5 rubrics; their scores count in each section like any other panelist of that section.
 4. **Results:** watch the grades come in, then click **Download CSV**.
 5. **Rubrics:** edit, add or delete criteria if needed.
 
@@ -60,3 +60,4 @@ Both switches are at the top of the admin **Results** page. Visitors can't touch
 | `supabase/schema.sql` | Tables, security rules and the rubrics; run once in the Supabase SQL Editor |
 | `supabase/002_public_pages.sql` | Settings, team registration and public results; run once after `schema.sql` |
 | `supabase/003_comments.sql` | Panel comments on the public results page (max 2,000 characters); run once after `002_public_pages.sql` |
+| `supabase/004_all_sections.sql` | "All sections" panelists who grade every rubric; run once after `003_comments.sql` |

@@ -72,6 +72,14 @@ async function loadBaseData() {
 function rubricsOf(sectionId) { return state.data.rubrics.filter((r) => r.section_id === sectionId); }
 function criteriaOf(rubricId) { return state.data.criteria.filter((c) => c.rubric_id === rubricId); }
 function criteriaOfSection(sectionId) { return rubricsOf(sectionId).flatMap((r) => criteriaOf(r.id)); }
+// What the signed-in panelist grades: one section, or every section
+function gradesAll(p = state.profile) { return !!p?.all_sections; }
+function canGrade(p = state.profile) { return !!p?.section_id || gradesAll(p); }
+function myRubrics() {
+  return gradesAll() ? state.data.sections.flatMap((s) => rubricsOf(s.id)) : rubricsOf(state.profile.section_id);
+}
+function myCriteria() { return myRubrics().flatMap((r) => criteriaOf(r.id)); }
+function gradingLabel(p) { return gradesAll(p) ? 'All sections' : (p?.section_id ? 'Section ' + p.section_id : ''); }
 function membersOf(teamId) { return state.data.members.filter((m) => m.team_id === teamId); }
 function sectionName(id) { return state.data.sections.find((s) => s.id === id)?.name || 'No section'; }
 
@@ -96,7 +104,7 @@ function renderHeader() {
   }
 
   const tabs = [];
-  if (state.profile.section_id) tabs.push(['grade', 'Grade teams']);
+  if (canGrade()) tabs.push(['grade', 'Grade teams']);
   if (state.profile.role === 'admin') {
     tabs.push(['results', 'Results'], ['teams', 'Teams'], ['panelists', 'Panelists'], ['rubrics', 'Rubrics']);
   }
@@ -204,7 +212,7 @@ async function loadMyGrades() {
 async function renderGrade() {
   const sectionId = state.profile.section_id;
   const mine = await loadMyGrades();
-  const sectionCriteria = criteriaOfSection(sectionId);
+  const sectionCriteria = myCriteria();
   const teams = state.data.teams;
   if (!state.selectedTeam || !teams.some((t) => t.id === state.selectedTeam)) state.selectedTeam = teams[0]?.id || null;
 
@@ -232,7 +240,7 @@ async function renderGrade() {
 
   show(
     el('div', { class: 'card' },
-      el('h2', {}, 'Section ' + sectionId + ': ' + sectionName(sectionId)),
+      el('h2', {}, gradesAll() ? 'All sections: every rubric' : 'Section ' + sectionId + ': ' + sectionName(sectionId)),
       el('p', { class: 'muted' }, 'Score each criterion from 1 to 5, give a group grade and an individual grade for each member, then click Save.'),
     ),
     el('div', { class: 'grade-layout' }, side, body),
@@ -241,7 +249,7 @@ async function renderGrade() {
 
 function gradeForm(team, sectionId, mine) {
   const picked = new Map(mine.scores.filter((s) => s.team_id === team.id).map((s) => [s.criterion_id, s.score]));
-  const sectionCriteria = criteriaOfSection(sectionId);
+  const sectionCriteria = myCriteria();
   const scoreOut = el('span', { class: 'score-pill' });
   const updateScore = () => {
     const values = sectionCriteria.map((c) => picked.get(c.id)).filter(Boolean);
@@ -249,7 +257,7 @@ function gradeForm(team, sectionId, mine) {
     scoreOut.textContent = (p === null ? '–' : p.toFixed(2) + '%') + `  (${values.length}/${sectionCriteria.length} scored)`;
   };
 
-  const rubricBlocks = rubricsOf(sectionId).map((r) => el('div', { class: 'card' },
+  const rubricBlocks = myRubrics().map((r) => el('div', { class: 'card' },
     el('h3', {}, r.code + ' · ' + r.name),
     el('p', { class: 'legend' }, '1 Poor · 2 Fair · 3 Good · 4 Very good · 5 Excellent'),
     criteriaOf(r.id).map((c) => {
@@ -319,7 +327,7 @@ function gradeForm(team, sectionId, mine) {
       el('div', { class: 'row' },
         el('div', {}, el('h2', {}, team.name), el('div', { class: 'muted' }, team.project_title || '')),
         el('span', { class: 'spacer' }),
-        el('div', {}, el('div', { class: 'muted' }, 'Section score'), scoreOut),
+        el('div', {}, el('div', { class: 'muted' }, gradesAll() ? 'Score (all rubrics)' : 'Section score'), scoreOut),
       ),
     ),
     rubricBlocks,
@@ -374,7 +382,7 @@ async function renderResults() {
   const commentCards = results.filter((r) => r.comments.length).map((r) => el('div', { class: 'card' },
     el('h3', {}, 'Comments for ' + r.team.name),
     r.comments.map((c) => el('div', { class: 'comment' },
-      el('div', { class: 'member-line' }, c.who + (c.section ? ` · Section ${c.section}` : '')),
+      el('div', { class: 'member-line' }, c.who + (c.label ? ' · ' + c.label : '')),
       el('p', {}, c.text),
     )),
   ));
@@ -383,6 +391,8 @@ async function renderResults() {
     const names = P.filter((p) => p.section_id === s.id).map((p) => p.full_name || p.email);
     return el('div', { class: 'member-line' }, `Section ${s.id}: ${names.length ? names.join(', ') : 'no panelists yet'}`);
   });
+  const allNames = P.filter((p) => gradesAll(p)).map((p) => p.full_name || p.email);
+  if (allNames.length) panelistsBySection.push(el('div', { class: 'member-line' }, 'All sections: ' + allNames.join(', ')));
 
   // Switches for the two public pages
   const toggle = (field, label, onText, offText) => {
@@ -450,7 +460,7 @@ function computeResults(S, G, I, P = []) {
     });
     const comments = G.filter((g) => g.team_id === team.id && (g.remarks || '').trim()).map((g) => {
       const p = P.find((x) => x.id === g.panelist_id);
-      return { who: p ? (p.full_name || p.email) : 'Panelist', section: p?.section_id || null, text: g.remarks.trim() };
+      return { who: p ? (p.full_name || p.email) : 'Panelist', section: p?.section_id || null, label: gradingLabel(p), text: g.remarks.trim() };
     });
     return {
       team, sections,
@@ -465,7 +475,7 @@ function downloadCsv(results) {
   const lines = [['Team', 'Project', 'Member', ...state.data.sections.map((s) => 'Section ' + s.id + ' %'), 'Rubric average %', 'Group grade', 'Individual grade', 'Panel comments'].map(q).join(',')];
   for (const r of results) {
     const base = state.data.sections.map((s) => pct(r.sections[s.id].percent));
-    const comments = r.comments.map((c) => `${c.who}${c.section ? ' (Sec ' + c.section + ')' : ''}: ${c.text}`).join(' | ');
+    const comments = r.comments.map((c) => `${c.who}${c.label ? ' (' + c.label + ')' : ''}: ${c.text}`).join(' | ');
     const rows = r.members.length ? r.members : [{ member: { full_name: '' }, average: null }];
     rows.forEach((m, i) => {
       lines.push([r.team.name, r.team.project_title, m.member.full_name, ...base, pct(r.rubricAverage), pct(r.groupAverage), pct(m.average), i === 0 ? comments : ''].map(q).join(','));
@@ -542,11 +552,13 @@ async function renderPanelists() {
   const profiles = check(await db.from('profiles').select('*').order('created_at'));
   const rows = profiles.map((p) => {
     const section = el('select', { onchange: () => guard(async () => {
-        check(await db.from('profiles').update({ section_id: section.value ? Number(section.value) : null }).eq('id', p.id));
-        toast(`${p.full_name || p.email} now grades ${section.value ? 'Section ' + section.value : 'no section'}.`);
+        const all = section.value === 'all';
+        check(await db.from('profiles').update({ section_id: all || !section.value ? null : Number(section.value), all_sections: all }).eq('id', p.id));
+        toast(`${p.full_name || p.email} now grades ${all ? 'all sections' : section.value ? 'Section ' + section.value : 'no section'}.`);
       }) },
       el('option', { value: '' }, 'No section'),
-      state.data.sections.map((s) => el('option', { value: s.id, selected: p.section_id === s.id }, `Section ${s.id}: ${s.name}`)),
+      state.data.sections.map((s) => el('option', { value: s.id, selected: !gradesAll(p) && p.section_id === s.id }, `Section ${s.id}: ${s.name}`)),
+      el('option', { value: 'all', selected: gradesAll(p) }, 'All sections (every rubric)'),
     );
     const role = el('select', { disabled: p.id === state.user.id, onchange: () => guard(async () => {
         check(await db.from('profiles').update({ role: role.value }).eq('id', p.id));
@@ -708,7 +720,7 @@ async function start() {
   if (!state.user) return renderAuth();
   await guard(async () => {
     state.profile = check(await db.from('profiles').select('*').eq('id', state.user.id).single());
-    const view = state.profile.role === 'admin' ? 'results' : (state.profile.section_id ? 'grade' : 'waiting');
+    const view = state.profile.role === 'admin' ? 'results' : (canGrade() ? 'grade' : 'waiting');
     await go(state.view && state.view !== 'waiting' ? state.view : view);
   });
 }
